@@ -1,79 +1,248 @@
-use tokio::net::TcpStream;
-use tokio::io::{ AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader };
-use tokio::sync::mpsc;
-use std::error::Error;
-use std::io::{ self, Write };
-use std::thread;
+use crossterm::{
+    event::{ self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind },
+    execute,
+    terminal::{ disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen },
+};
+use ratatui::{ backend::{ Backend, CrosstermBackend }, Terminal, widgets::ListState };
+use std::{ error::Error, io::{ self, Stdout }, time::{ Duration, Instant } };
+use tokio::{ io::{ AsyncBufReadExt, AsyncWriteExt, BufReader }, net::TcpStream, sync::mpsc };
+mod ui;
+
+struct App {
+    input: String,
+    messages: Vec<String>,
+    message_state: ListState,
+    should_quit: bool,
+}
+
+impl App {
+    fn new() -> App {
+        App {
+            input: String::new(),
+            messages: Vec::new(),
+            message_state: ListState::default(),
+            should_quit: false,
+        }
+    }
+
+    fn handle_enter(&mut self) -> Option<String> {
+        if !self.input.is_empty() {
+            let message_to_send = self.input.clone();
+            self.add_message(format!("Ben: {}", self.input));
+            self.input.clear();
+            Some(message_to_send)
+        } else {
+            None
+        }
+    }
+
+    fn add_message(&mut self, message: String) {
+        if !message.is_empty() {
+            self.messages.push(message);
+            if self.messages.len() > 25 {
+                self.messages.remove(0);
+            }
+            self.message_state.select(Some(self.messages.len().saturating_sub(1)));
+        }
+    }
+
+    fn scroll_up(&mut self) {
+        let current_selection = self.message_state.selected().unwrap_or(0);
+        if current_selection > 0 {
+            self.message_state.select(Some(current_selection - 1));
+        }
+    }
+
+    fn scroll_down(&mut self) {
+        let current_selection = self.message_state.selected().unwrap_or(0);
+        if !self.messages.is_empty() && current_selection < self.messages.len() - 1 {
+            print!("aa");
+            self.message_state.select(Some(current_selection + 1));
+        } else if !self.messages.is_empty() {
+            self.message_state.select(None);
+            self.message_state.select(Some(current_selection - 1));
+        }
+    }
+
+    fn scroll_to_bottom(&mut self) {
+        if !self.messages.is_empty() {
+            self.message_state.select(Some(self.messages.len() - 1));
+        } else {
+            self.message_state.select(None);
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let server_addr = "127.0.0.1:8080";
-    let server_stream = TcpStream::connect(server_addr).await?;
-    println!("Sunucuya bağlanıldı: {}", server_addr);
-
-    let (reader, mut writer) = server_stream.into_split();
+    let server_addr = "10.16.4.22:56570";
+    let stream = match TcpStream::connect(server_addr).await {
+        Ok(stream) => stream,
+        Err(e) => {
+            eprintln!("Sunucuya bağlanılamadı: {}. Lütfen sunucunun çalıştığından emin olun.", e);
+            return Ok(());
+        }
+    };
+    let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
 
-    let (tx, mut rx) = mpsc::channel::<String>(10);
+    let (ui_to_network_tx, mut ui_to_network_rx) = mpsc::channel::<String>(32);
+    let (network_to_ui_tx, network_to_ui_rx) = mpsc::channel::<String>(32);
 
-    let mut initial_buffer = [0; 1024];
-
-    match reader.read(&mut initial_buffer).await {
-        Ok(n) if n > 0 => println!("{}", String::from_utf8_lossy(&initial_buffer)),
-        _ => {}
-    }
-
-    print!("> ");
-    io::stdout().flush()?;
-
+    //Read task*********************************************************************
+    let network_tx_clone = network_to_ui_tx.clone();
     let read_task = tokio::spawn(async move {
         let mut line = String::new();
         loop {
             match reader.read_line(&mut line).await {
                 Ok(0) => {
-                    println!("Sunucu bağlantısı kapandı.");
-                    io::stdout().flush().unwrap();
-                    return;
+                    let _ = network_tx_clone.send("Sunucu ile bağlantı kapandı.".to_string()).await;
+                    break;
                 }
                 Ok(_) => {
-                    print!("\r{}", line.trim_end());
-                    println!("> ");
-                    io::stdout().flush().unwrap();
+                    if network_tx_clone.send(line.trim_end().to_string()).await.is_err() {
+                        break;
+                    }
                     line.clear();
                 }
                 Err(e) => {
-                    eprintln!("Mesaj okunamadı: {}", e);
-                    io::stdout().flush().unwrap();
+                    let _ = network_tx_clone.send(
+                        format!("Sunucudan gelen mesaj okunamadı: {}", e)
+                    ).await;
                     break;
                 }
             }
         }
     });
 
+    //Write task********************************************************************
     let write_task = tokio::spawn(async move {
-        loop {
-            let mut user_input = String::new();
-            print!(">");
-            io::stdout().flush().unwrap();
-
-            if io::stdin().read_line(&mut user_input).is_err() {
-                eprintln!("Girdi okunamadı!");
+        while let Some(message) = ui_to_network_rx.recv().await {
+            let message_to_send = format!("{}\n", message);
+            if writer.write_all(message_to_send.as_bytes()).await.is_err() {
+                eprintln!("Sunucuya mesaj gönderilemedi.");
                 break;
             }
-
-            if writer.write_all(user_input.as_bytes()).await.is_err() {
-                eprintln!("Girdi sunucuya gönderilemedi.");
-                break;
-            }
-
-            if user_input.trim().eq_ignore_ascii_case("/quit") {
-                print!("Çıkılıyor");
+            if message.trim().eq_ignore_ascii_case("/quit") {
                 break;
             }
         }
     });
 
-    let _ = tokio::try_join!(read_task, write_task);
+    let mut terminal = setup_terminal()?;
+    let app = App::new();
+    // --- Ana Uygulama Döngüsü ---
+    let res = run_app(&mut terminal, app, network_to_ui_rx, ui_to_network_tx).await; // await eklendi
 
+    let _ = tokio::join!(read_task, write_task);
+
+    // --- Temizlik ---
+    restore_terminal(&mut terminal)?;
+
+    if let Err(e) = res {
+        println!("Uygulama hatası: {:?}", e);
+    }
+
+    Ok(())
+}
+
+// Ana uygulama döngüsünü çalıştıran fonksiyon
+async fn run_app<B: Backend>(
+    terminal: &mut Terminal<B>,
+    mut app: App,
+    mut network_to_ui_rx: mpsc::Receiver<String>,
+    ui_to_network_tx: mpsc::Sender<String>
+) -> io::Result<()> {
+    let tick_rate = Duration::from_millis(250); // Döngü sıklığı (olay bekleme süresi)
+    let mut last_tick = Instant::now();
+
+    loop {
+        terminal.draw(|f| ui::ui(f, &mut app))?;
+
+        let timeout = tick_rate
+            .checked_sub(last_tick.elapsed())
+            .unwrap_or_else(|| Duration::from_secs(0));
+
+        match network_to_ui_rx.try_recv() {
+            Ok(message) => {
+                app.add_message(message);
+            }
+            Err(_) => {
+                break;
+            }
+        }
+
+        if crossterm::event::poll(timeout)? {
+            if let Event::Key(key) = event::read()? {
+                if key.kind == KeyEventKind::Press {
+                    match key.code {
+                        KeyCode::Enter => {
+                            if let Some(message_to_send) = app.handle_enter() {
+                                if ui_to_network_tx.send(message_to_send.clone()).await.is_err() {
+                                    app.should_quit = true;
+                                }
+
+                                if message_to_send.trim().eq_ignore_ascii_case("/quit") {
+                                    app.should_quit = true;
+                                }
+                            }
+                        }
+                        KeyCode::Up => app.scroll_up(),
+
+                        KeyCode::Down => app.scroll_down(),
+
+                        KeyCode::Char(c) => {
+                            app.input.push(c);
+                            app.scroll_to_bottom();
+                        }
+                        KeyCode::Backspace => {
+                            app.input.pop();
+                            app.scroll_to_bottom();
+                        }
+                        KeyCode::Esc => {
+                            // Esc ile çıkış
+                            app.should_quit = true;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        if last_tick.elapsed() >= tick_rate {
+            last_tick = Instant::now();
+        }
+
+        if app.should_quit {
+            if !app.input.trim().eq_ignore_ascii_case("/quit") {
+                let _ = ui_to_network_tx.try_send("/quit".to_string());
+            }
+            return Ok(()); // Döngüden çık
+        }
+    }
+    Ok(())
+}
+
+// Terminali kuran yardımcı fonksiyon
+fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>, Box<dyn Error>> {
+    let mut stdout = io::stdout();
+    enable_raw_mode()?; // Ham modu etkinleştir
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?; // Alternatif ekrana geç, fare olaylarını yakala (isteğe bağlı)
+    let backend = CrosstermBackend::new(stdout);
+    let terminal = Terminal::new(backend)?;
+    Ok(terminal)
+}
+
+// Terminali eski haline getiren yardımcı fonksiyon
+fn restore_terminal(
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>
+) -> Result<(), Box<dyn Error>> {
+    disable_raw_mode()?; // Ham modu devre dışı bırak
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture // Fare olaylarını bırak
+    )?;
+    terminal.show_cursor()?; // İmleci tekrar göster
     Ok(())
 }
