@@ -3,75 +3,13 @@ use crossterm::{
     execute,
     terminal::{ disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen },
 };
-use ratatui::{ backend::{ Backend, CrosstermBackend }, Terminal, widgets::ListState };
+use ratatui::{ backend::{ Backend, CrosstermBackend }, Terminal };
 use std::{ error::Error, io::{ self, Stdout }, time::{ Duration, Instant } };
 use tokio::{ io::{ AsyncBufReadExt, AsyncWriteExt, BufReader }, net::TcpStream, sync::mpsc };
+
 mod ui;
-
-struct App {
-    input: String,
-    messages: Vec<String>,
-    message_state: ListState,
-    should_quit: bool,
-}
-
-impl App {
-    fn new() -> App {
-        App {
-            input: String::new(),
-            messages: Vec::new(),
-            message_state: ListState::default(),
-            should_quit: false,
-        }
-    }
-
-    fn handle_enter(&mut self) -> Option<String> {
-        if !self.input.is_empty() {
-            let message_to_send = self.input.clone();
-            self.add_message(format!("Ben: {}", self.input));
-            self.input.clear();
-            Some(message_to_send)
-        } else {
-            None
-        }
-    }
-
-    fn add_message(&mut self, message: String) {
-        if !message.is_empty() {
-            self.messages.push(message);
-            if self.messages.len() > 25 {
-                self.messages.remove(0);
-            }
-            self.message_state.select(Some(self.messages.len().saturating_sub(1)));
-        }
-    }
-
-    fn scroll_up(&mut self) {
-        let current_selection = self.message_state.selected().unwrap_or(0);
-        if current_selection > 0 {
-            self.message_state.select(Some(current_selection - 1));
-        }
-    }
-
-    fn scroll_down(&mut self) {
-        let current_selection = self.message_state.selected().unwrap_or(0);
-        if !self.messages.is_empty() && current_selection < self.messages.len() - 1 {
-            print!("aa");
-            self.message_state.select(Some(current_selection + 1));
-        } else if !self.messages.is_empty() {
-            self.message_state.select(None);
-            self.message_state.select(Some(current_selection - 1));
-        }
-    }
-
-    fn scroll_to_bottom(&mut self) {
-        if !self.messages.is_empty() {
-            self.message_state.select(Some(self.messages.len() - 1));
-        } else {
-            self.message_state.select(None);
-        }
-    }
-}
+mod app;
+use app::App;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -131,6 +69,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let mut terminal = setup_terminal()?;
     let app = App::new();
+
     // --- Ana Uygulama Döngüsü ---
     let res = run_app(&mut terminal, app, network_to_ui_rx, ui_to_network_tx).await; // await eklendi
 
