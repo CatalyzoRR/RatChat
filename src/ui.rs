@@ -23,8 +23,8 @@ pub fn ui(f: &mut Frame, app: &mut App) {
 
     let messages_list = List::new(messages)
         .block(Block::default().borders(Borders::ALL).title("Sohbet"))
-        .style(Style::default().fg(Color::Blue))
-        .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::LightYellow))
+        .style(Style::default().fg(Color::White))
+        .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::Yellow))
         .highlight_symbol(">>");
 
     f.render_stateful_widget(messages_list, chunks[0], &mut app.message_state);

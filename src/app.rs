@@ -31,7 +31,7 @@ impl App {
     pub fn add_message(&mut self, message: String) {
         if !message.is_empty() {
             self.messages.push(message);
-            if self.messages.len() > 25 {
+            if self.messages.len() > 50 {
                 self.messages.remove(0);
             }
             self.message_state.select(Some(self.messages.len().saturating_sub(1)));
