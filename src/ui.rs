@@ -23,7 +23,7 @@ pub fn ui(f: &mut Frame, app: &mut App) {
 
     let messages_list = List::new(messages)
         .block(Block::default().borders(Borders::ALL).title("Sohbet"))
-        .style(Style::default().fg(Color::White))
+        .style(Style::default().fg(Color::Blue))
         .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::LightYellow))
         .highlight_symbol(">>");
 

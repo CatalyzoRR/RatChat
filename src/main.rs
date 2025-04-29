@@ -102,13 +102,8 @@ async fn run_app<B: Backend>(
             .checked_sub(last_tick.elapsed())
             .unwrap_or_else(|| Duration::from_secs(0));
 
-        match network_to_ui_rx.try_recv() {
-            Ok(message) => {
-                app.add_message(message);
-            }
-            Err(_) => {
-                break;
-            }
+        if let Ok(message) = network_to_ui_rx.try_recv() {
+            app.add_message(message);
         }
 
         if crossterm::event::poll(timeout)? {
@@ -159,14 +154,13 @@ async fn run_app<B: Backend>(
             return Ok(()); // Döngüden çık
         }
     }
-    Ok(())
 }
 
 // Terminali kuran yardımcı fonksiyon
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>, Box<dyn Error>> {
     let mut stdout = io::stdout();
     enable_raw_mode()?; // Ham modu etkinleştir
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?; // Alternatif ekrana geç, fare olaylarını yakala (isteğe bağlı)
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let terminal = Terminal::new(backend)?;
     Ok(terminal)
