@@ -20,7 +20,7 @@ impl App {
     pub fn handle_enter(&mut self) -> Option<String> {
         if !self.input.is_empty() {
             let message_to_send = self.input.clone();
-            self.add_message(format!("Ben: {}", self.input));
+            self.add_message(format!("Me: {}", self.input));
             self.input.clear();
             Some(message_to_send)
         } else {
@@ -48,7 +48,6 @@ impl App {
     pub fn scroll_down(&mut self) {
         let current_selection = self.message_state.selected().unwrap_or(0);
         if !self.messages.is_empty() && current_selection < self.messages.len() - 1 {
-            print!("aa");
             self.message_state.select(Some(current_selection + 1));
         } else if !self.messages.is_empty() {
             self.message_state.select(None);

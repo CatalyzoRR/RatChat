@@ -17,7 +17,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let stream = match TcpStream::connect(server_addr).await {
         Ok(stream) => stream,
         Err(e) => {
-            eprintln!("Sunucuya bağlanılamadı: {}. Lütfen sunucunun çalıştığından emin olun.", e);
+            eprintln!("Failed to connect the server: {e}.");
             return Ok(());
         }
     };
@@ -34,7 +34,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         loop {
             match reader.read_line(&mut line).await {
                 Ok(0) => {
-                    let _ = network_tx_clone.send("Sunucu ile bağlantı kapandı.".to_string()).await;
+                    let _ = network_tx_clone.send(
+                        "Connection with the server is closed.".to_string()
+                    ).await;
                     break;
                 }
                 Ok(_) => {
@@ -45,7 +47,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
                 Err(e) => {
                     let _ = network_tx_clone.send(
-                        format!("Sunucudan gelen mesaj okunamadı: {}", e)
+                        format!("Unable to read message from server: {e}")
                     ).await;
                     break;
                 }
@@ -56,9 +58,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //Write task********************************************************************
     let write_task = tokio::spawn(async move {
         while let Some(message) = ui_to_network_rx.recv().await {
-            let message_to_send = format!("{}\n", message);
+            let message_to_send = format!("{message}\n");
             if writer.write_all(message_to_send.as_bytes()).await.is_err() {
-                eprintln!("Sunucuya mesaj gönderilemedi.");
+                eprintln!("Failed to send message to the server.");
                 break;
             }
             if message.trim().eq_ignore_ascii_case("/quit") {
@@ -79,7 +81,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     restore_terminal(&mut terminal)?;
 
     if let Err(e) = res {
-        println!("Uygulama hatası: {:?}", e);
+        println!("App Error: {e:?}");
     }
 
     Ok(())
